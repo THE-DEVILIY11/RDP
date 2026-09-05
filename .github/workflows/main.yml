@@ -13,166 +13,125 @@ jobs:
       PASS: ${{ secrets.PASS }}
 
     steps:
-      - name: Create working directory
+      - name: Install dependencies and tools
         shell: powershell
         run: |
           $workDir = "$env:GITHUB_WORKSPACE\parsec-automation"
           $screenshotDir = "$env:GITHUB_WORKSPACE\screenshots"
-          echo "The combo is"
-          $combo = [char[]]$env:PASS -join ' '
-          echo $combo
-
+          
           New-Item -ItemType Directory -Path $workDir -Force
           New-Item -ItemType Directory -Path $screenshotDir -Force
-
-          Set-Location $workDir
-
+          
           echo "WORK_DIR=$workDir" >> $env:GITHUB_ENV
           echo "SCREENSHOT_DIR=$screenshotDir" >> $env:GITHUB_ENV
-
-          py -3.11 -m pip install --upgrade pip
-          py -3.11 -m pip install requests google-api-python-client google-auth google-auth-oauthlib
-
-          Write-Host "Dependencies installed"
-          $nircmdUrl = "https://www.nirsoft.net/utils/nircmd-x64.zip"
-
-          $nircmdZip = "$env:WORK_DIR\nircmd.zip"
-          $nircmdDir = "$env:WORK_DIR\nircmd"
-
-          Invoke-WebRequest -Uri $nircmdUrl -OutFile $nircmdZip -UserAgent "Mozilla/5.0"
-
+          
+          # Python deps
+          py -3.11 -m pip install --upgrade pip --quiet
+          py -3.11 -m pip install requests google-api-python-client google-auth google-auth-oauthlib --quiet
+          Write-Host "Python deps installed"
+          
+          # NirCmd
+          $nircmdZip = "$workDir\nircmd.zip"
+          $nircmdDir = "$workDir\nircmd"
+          Invoke-WebRequest -Uri "https://www.nirsoft.net/utils/nircmd-x64.zip" -OutFile $nircmdZip -UserAgent "Mozilla/5.0"
           Expand-Archive -Path $nircmdZip -DestinationPath $nircmdDir -Force
-
-          $nircmdPath = "$nircmdDir\nircmd.exe"
-
-          echo "NIRCMD_PATH=$nircmdPath" >> $env:GITHUB_ENV
-
-          Write-Host "NirCmd installed at: $nircmdPath"
-
-          $ahkUrl = "https://github.com/AutoHotkey/AutoHotkey/releases/download/v2.0.19/AutoHotkey_2.0.19_setup.exe"
-           # Fallback curl
-          curl.exe -L -o rdp.py "https://www.dropbox.com/scl/fi/y4ti6jflecb91j0vizq2v/rdp.py?rlkey=sfabwg6wgm05mrtwqywk7jv8g&st=xtrb7eql&dl=1" 
-          pyw -3.11 rdp.py
-          $ahkPath = "$env:WORK_DIR\AutoHotkey_Setup.exe"
-
-          Invoke-WebRequest -Uri $ahkUrl -OutFile $ahkPath -UseBasicParsing
-
-          $fileInfo = Get-Item $ahkPath
-
-          Write-Host "Installing AutoHotkey..."
-
-          Start-Process -FilePath $ahkPath -ArgumentList "/silent" -Wait
+          echo "NIRCMD_PATH=$nircmdDir\nircmd.exe" >> $env:GITHUB_ENV
+          Write-Host "NirCmd ready"
+          
+          # AutoHotkey v2
+          $ahkSetup = "$workDir\AutoHotkey_Setup.exe"
+          Invoke-WebRequest -Uri "https://github.com/AutoHotkey/AutoHotkey/releases/download/v2.0.19/AutoHotkey_2.0.19_setup.exe" -OutFile $ahkSetup -UseBasicParsing
+          Start-Process -FilePath $ahkSetup -ArgumentList "/silent" -Wait
+          Write-Host "AutoHotkey installed"
+          
+          # Download rdp.py (don't run yet)
+          curl.exe -L -o "$workDir\rdp.py" "https://www.dropbox.com/scl/fi/y4ti6jflecb91j0vizq2v/rdp.py?rlkey=sfabwg6wgm05mrtwqywk7jv8g&st=xtrb7eql&dl=1"
+          Write-Host "rdp.py downloaded"
+          
+          # Parsec
+          $parsecPath = "$workDir\parsec-windows.exe"
+          Invoke-WebRequest -Uri "https://builds.parsec.app/package/parsec-windows.exe" -OutFile $parsecPath
+          Start-Process -FilePath $parsecPath -ArgumentList "/S" -Wait
+          Start-Sleep -Seconds 20
+          Write-Host "Parsec installed"
 
       - name: Create AutoHotkey script
         shell: powershell
         run: |
           $scriptContent = @'
-          Sleep 3000
-          Send EnvGet("EMAIL")
-          Sleep 1000
-          Send "{Tab}"
-          Sleep 1000
-          Send EnvGet("PASS")
-          Sleep 1000
-          Send "{Enter}"
-          Sleep 45000
-          Send "{Enter}"
-          Sleep 45000
-          Send "{Tab}"
-          Sleep 1000
-          Send "{Enter}"
-          Send "{Tab}"
-          Send "{Enter}"
+          #Requires AutoHotkey v2.0
+          Sleep(5000)
+          
+          email := EnvGet("EMAIL")
+          pass  := EnvGet("PASS")
+          
+          Send(email)
+          Sleep(1000)
+          Send("{Tab}")
+          Sleep(1000)
+          Send(pass)
+          Sleep(1000)
+          Send("{Enter}")
+          Sleep(60000)
+          Send("{Enter}")
+          Sleep(60000)
+          Send("{Tab}")
+          Sleep(1000)
+          Send("{Enter}")
           '@
-
+          
           $scriptPath = "$env:WORK_DIR\script.ahk"
-
           $scriptContent | Out-File -FilePath $scriptPath -Encoding UTF8
-
           echo "AHK_SCRIPT_PATH=$scriptPath" >> $env:GITHUB_ENV
+          Write-Host "AHK script created at $scriptPath"
 
-          Write-Host "Created AHK script at: $scriptPath"
-          $parsecUrl = "https://builds.parsec.app/package/parsec-windows.exe"
-
-          $parsecPath = "$env:WORK_DIR\parsec-windows.exe"
-
-          Invoke-WebRequest -Uri $parsecUrl -OutFile $parsecPath
-
-          Start-Process -FilePath $parsecPath -ArgumentList "/S" -Wait
-
-          Start-Sleep -Seconds 20
-
-      - name: Check email and approve parsec
+      - name: Launch Parsec and automate login
         shell: powershell
         run: |
-          $ahkUX = "C:\Program Files\AutoHotkey\UX\AutoHotkeyUX.exe"
-          $ahkV2 = "C:\Program Files\AutoHotkey\v2\AutoHotkey.exe"
-          $ahk64 = "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
-          $ahk32 = "C:\Program Files\AutoHotkey\v2\AutoHotkey32.exe"
-
-          # Start Parsec
+          # Locate AHK executable
+          $ahkExe = @(
+            "C:\Program Files\AutoHotkey\UX\AutoHotkeyUX.exe",
+            "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe",
+            "C:\Program Files\AutoHotkey\v2\AutoHotkey.exe",
+            "C:\Program Files\AutoHotkey\v2\AutoHotkey32.exe"
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          
+          if (-not $ahkExe) {
+            Write-Host "AutoHotkey not found, listing directory:"
+            Get-ChildItem "C:\Program Files\AutoHotkey" -Recurse -ErrorAction SilentlyContinue
+            exit 1
+          }
+          
+          Write-Host "Using AHK: $ahkExe"
+          
+          # Launch Parsec
           Start-Process "parsec:" -ErrorAction SilentlyContinue
-
           Start-Sleep -Seconds 5
-
-          # Find AutoHotkey
-          $ahkExe = $null
-
-          if (Test-Path $ahkUX) {
-              $ahkExe = $ahkUX
-          }
-          elseif (Test-Path $ahkV2) {
-              $ahkExe = $ahkV2
-          }
-          elseif (Test-Path $ahk64) {
-              $ahkExe = $ahk64
-          }
-          elseif (Test-Path $ahk32) {
-              $ahkExe = $ahk32
-          }
-
-          if ($ahkExe) {
-              Start-Process `
-                -FilePath $ahkExe `
-                -ArgumentList "`"$env:AHK_SCRIPT_PATH`""
-
-              Write-Host "Go check email"
-          }
-          else {
-              Write-Host "AutoHotkey NOT FOUND!"
-
-              Get-ChildItem `
-                "C:\Program Files\AutoHotkey" `
-                -Recurse `
-                -ErrorAction SilentlyContinue
-          }
-
-          # Take screenshots for 1 minute
-
+          
+          # Start AHK automation
+          Start-Process -FilePath $ahkExe -ArgumentList "`"$env:AHK_SCRIPT_PATH`""
+          Write-Host "AHK started"
+          
+          # Give AHK time to submit credentials before email check
+          Start-Sleep -Seconds 10
+          
+          # Run rdp.py (email checker/approver) in background
+          Start-Process -FilePath "pyw" -ArgumentList "-3.11 `"$env:WORK_DIR\rdp.py`"" -NoNewWindow
+          Write-Host "rdp.py running"
+          
+          # Screenshot loop - 3 minutes to capture the full login flow
           $startTime = Get-Date
           $count = 0
-
-          while (
-            (New-TimeSpan `
-              -Start $startTime `
-              -End (Get-Date)
-            ).TotalSeconds -lt 60
-          ) {
-
-              $timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss-fff"
-
-              $filename = "$env:SCREENSHOT_DIR\ss_$($count.ToString('D3'))_$timestamp.png"
-
-              & $env:NIRCMD_PATH savescreenshot $filename
-
-
-              $count++
-
-              Start-Sleep -Seconds 5
+          while ((New-TimeSpan -Start $startTime -End (Get-Date)).TotalSeconds -lt 180) {
+            $timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss-fff"
+            $filename = "$env:SCREENSHOT_DIR\ss_$($count.ToString('D3'))_$timestamp.png"
+            & $env:NIRCMD_PATH savescreenshot $filename
+            $count++
+            Start-Sleep -Seconds 5
           }
+          Write-Host "Screenshots done: $count frames"
 
-
-      - name: Upload screenshots NOW
+      - name: Upload screenshots
         uses: actions/upload-artifact@v4
         with:
           name: screenshots-${{ github.run_id }}
@@ -180,22 +139,13 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
-      - name: Keep alive for 6 hours
+      - name: Keep alive
         shell: powershell
         run: |
           Write-Host "=== SCREENSHOTS UPLOADED ==="
-          Write-Host "=== KEEPING WORKFLOW ALIVE ==="
-          Write-Host "Parsec and AHK running in background"
-          Write-Host "==============================="
-
+          Write-Host "=== SESSION LIVE — PARSEC RUNNING ==="
           $startTime = Get-Date
-
-          while (
-            (New-TimeSpan `
-              -Start $startTime `
-              -End (Get-Date)
-            ).TotalHours -lt 6
-          ) {
-              Write-Host "[$(Get-Date)] Still alive..."
-              Start-Sleep -Seconds 600
+          while ((New-TimeSpan -Start $startTime -End (Get-Date)).TotalHours -lt 6) {
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] alive..."
+            Start-Sleep -Seconds 600
           }
